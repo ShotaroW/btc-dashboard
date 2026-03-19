@@ -6,9 +6,10 @@ import requests
 import streamlit as st
 from streamlit_autorefresh import st_autorefresh
 
-from src.ai_chat import build_context, stream_ai_response
+from src.ai_chat import build_context, explain_prediction, stream_ai_response
 from src.database import ensure_table_exists, load_data, save_bulk_data, save_price
 from src.fetcher import fetch_btc_price, fetch_historical_data
+from src.predictor import predict_price
 
 # Streamlitの右上ツールバーを非表示
 st.markdown(
@@ -160,6 +161,62 @@ if len(filtered_df) >= 2:
     st.altair_chart(chart, use_container_width=True)
 else:
     st.warning(f"{range_option} の表示に必要なデータがまだ少ないです。60秒ごとに自動更新されます。")
+
+# --- 価格予測 ---
+st.divider()
+st.subheader("24時間価格予測")
+
+if st.button("予測を実行"):
+    with st.spinner("Prophetで予測中..."):
+        forecast_df = predict_price(df)
+
+    if forecast_df.empty:
+        st.warning("予測に必要なデータが不足しています。しばらく待ってから再実行してください。")
+    else:
+        st.session_state["forecast_df"] = forecast_df
+        if not fetch_error and price is not None:
+            with st.spinner("AIが解説中..."):
+                try:
+                    explanation = explain_prediction(price, forecast_df)
+                    st.session_state["forecast_explanation"] = explanation
+                except Exception:
+                    st.session_state["forecast_explanation"] = None
+
+if "forecast_df" in st.session_state:
+    forecast_df = st.session_state["forecast_df"]
+    latest_ts = df["timestamp"].max()
+    future_df = forecast_df[forecast_df["ds"] > latest_ts]
+
+    hist_line = alt.Chart(df.tail(72)).mark_line(
+        color="#8fd3ff", strokeWidth=2
+    ).encode(
+        x=alt.X("timestamp:T", title="Time"),
+        y=alt.Y("price_jpy:Q", title="Price (JPY)", scale=alt.Scale(zero=False)),
+    )
+
+    forecast_line = alt.Chart(future_df).mark_line(
+        color="#ffaa00", strokeWidth=2, strokeDash=[6, 3]
+    ).encode(
+        x="ds:T",
+        y=alt.Y("yhat:Q", scale=alt.Scale(zero=False)),
+    )
+
+    band = alt.Chart(future_df).mark_area(
+        color="#ffaa00", opacity=0.15
+    ).encode(
+        x="ds:T",
+        y="yhat_lower:Q",
+        y2="yhat_upper:Q",
+    )
+
+    st.altair_chart(
+        (hist_line + band + forecast_line).properties(height=350).interactive(),
+        use_container_width=True,
+    )
+
+    explanation = st.session_state.get("forecast_explanation")
+    if explanation:
+        st.info(explanation)
 
 # --- AIチャット ---
 st.divider()

@@ -1,0 +1,6 @@
+streamlit
+altair
+pandas
+requests
+streamlit-autorefresh
+ollama
